@@ -48,6 +48,10 @@
 #include <dynamic_reconfigure/server.h>
 #include <ar_track_alvar/ParamsConfig.h>
 
+// for ROI Hack
+#include <algorithm>
+#include <sensor_msgs/RegionOfInterest.h>
+
 using namespace alvar;
 using namespace std;
 
@@ -57,8 +61,10 @@ cv_bridge::CvImagePtr cv_ptr_;
 image_transport::Subscriber cam_sub_;
 ros::Publisher arMarkerPub_;
 ros::Publisher rvizMarkerPub_;
+ros::Publisher roiPub_;
 ar_track_alvar_msgs::AlvarMarkers arPoseMarkers_;
 visualization_msgs::Marker rvizMarker_;
+sensor_msgs::RegionOfInterest roi_;
 tf::TransformListener *tf_listener;
 tf::TransformBroadcaster *tf_broadcaster;
 MarkerDetector<MarkerData> marker_detector;
@@ -106,8 +112,19 @@ void getCapCallback (const sensor_msgs::ImageConstPtr & image_msg)
 			for (size_t i=0; i<marker_detector.markers->size(); i++) 
 			{
 				//Get the pose relative to the camera
-        		int id = (*(marker_detector.markers))[i].GetId(); 
-				Pose p = (*(marker_detector.markers))[i].pose;
+        		int id = (*(marker_detector.markers))[i].GetId();
+				
+				// ROI Hack
+				std::vector<PointDouble>& roi_corners = (*(marker_detector.markers))[i].marker_corners_img;
+				roi_.x_offset = std::min(std::min(roi_corners[0].x, roi_corners[1].x), std::min(roi_corners[2].x, roi_corners[3].x));
+        roi_.y_offset = std::min(std::min(roi_corners[0].y, roi_corners[1].y), std::min(roi_corners[2].y, roi_corners[3].y));
+        const double roi_max_x = std::max(std::max(roi_corners[0].x, roi_corners[1].x), std::max(roi_corners[2].x, roi_corners[3].x));
+        const double roi_max_y = std::max(std::max(roi_corners[0].y, roi_corners[1].y), std::max(roi_corners[2].y, roi_corners[3].y));
+        roi_.width = roi_max_x - roi_.x_offset;
+        roi_.height = roi_max_y - roi_.y_offset;
+        roiPub_.publish(roi_);
+        
+				Pose p = (*(marker_detector.markers))[i].pose; 
 				double px = p.translation[0]/100.0;
 				double py = p.translation[1]/100.0;
 				double pz = p.translation[2]/100.0;
@@ -272,7 +289,7 @@ int main(int argc, char *argv[])
 	tf_broadcaster = new tf::TransformBroadcaster();
 	arMarkerPub_ = n.advertise < ar_track_alvar_msgs::AlvarMarkers > ("ar_pose_marker", 0);
 	rvizMarkerPub_ = n.advertise < visualization_msgs::Marker > ("visualization_marker", 0);
-	
+	roiPub_ = n.advertise< sensor_msgs::RegionOfInterest > ("roi", 0);
   // Prepare dynamic reconfiguration
   dynamic_reconfigure::Server < ar_track_alvar::ParamsConfig > server;
   dynamic_reconfigure::Server<ar_track_alvar::ParamsConfig>::CallbackType f;
